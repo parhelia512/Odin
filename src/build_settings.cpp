@@ -441,6 +441,7 @@ struct BuildContext {
 	String extra_assembler_flags;
 	String microarch;
 	BuildModeKind build_mode;
+	bool   keep_executable;
 	bool   generate_docs;
 	bool   custom_optimization_level;
 	i32    optimization_level;
@@ -459,6 +460,7 @@ struct BuildContext {
 	bool   ignore_unknown_attributes;
 	bool   no_bounds_check;
 	bool   no_type_assert;
+	bool   dynamic_literals;  // Opt-in to `#+feature dynamic-literals` project-wide.
 	bool   no_output_files;
 	bool   no_crt;
 	bool   no_rpath;
@@ -1915,12 +1917,6 @@ gb_internal void init_build_context(TargetMetrics *cross_target, Subtarget subta
 	}
 
 
-	// TODO: Static map calls are bugged on `amd64sysv` abi.
-	if (bc->metrics.os != TargetOs_windows && bc->metrics.arch == TargetArch_amd64) {
-		// ENFORCE DYNAMIC MAP CALLS
-		bc->dynamic_map_calls = true;
-	}
-
 	bc->ODIN_VALGRIND_SUPPORT = false;
 	if (build_context.metrics.os != TargetOs_windows) {
 		switch (bc->metrics.arch) {
@@ -2214,11 +2210,34 @@ gb_internal bool init_build_paths(String init_filename) {
 			while (output_name.len > 0 && (output_name[output_name.len-1] == '/' || output_name[output_name.len-1] == '\\')) {
 				output_name.len -= 1;
 			}
+			// Only trim the extension if it's an Odin source file.
+			// This lets people build folders with extensions or files beginning with dots.
+			if (path_extension(output_name) == ".odin" && !path_is_directory(output_name)) {
+				output_name = remove_extension_from_path(output_name);
+			}
 			output_name = remove_directory_from_path(output_name);
-			output_name = remove_extension_from_path(output_name);
 			output_name = copy_string(ha, string_trim_whitespace(output_name));
-			output_path = path_from_string(ha, output_name);
-			
+			// This is `path_from_string` without the extension trimming.
+			Path res = {};
+			if (output_name.len > 0) {
+				String fullpath = path_to_full_path(ha, output_name);
+				defer (gb_free(ha, fullpath.text));
+
+				res.basename = directory_from_path(fullpath);
+				res.basename = copy_string(ha, res.basename);
+
+				if (path_is_directory(fullpath)) {
+					if (res.basename.len > 0 && res.basename.text[res.basename.len - 1] == '/') {
+						res.basename.len--;
+					}
+				} else {
+					isize name_start = (res.basename.len > 0) ? res.basename.len + 1 : res.basename.len;
+					res.name         = substring(fullpath, name_start, fullpath.len);
+					res.name         = copy_string(ha, res.name);
+				}
+			}
+			output_path = res;
+
 			// Note(Dragos): This is a fix for empty filenames
 			// Turn the trailing folder into the file name
 			if (output_path.name.len == 0) {
@@ -2283,9 +2302,10 @@ gb_internal bool init_build_paths(String init_filename) {
 		case TargetOs_windows:
 		case TargetOs_linux:
 		case TargetOs_darwin:
+		case TargetOs_freebsd:
 			break;
 		default:
-			gb_printf_err("-sanitize:address is only supported on windows, linux, and darwin\n");
+			gb_printf_err("-sanitize:address is only supported on Windows, Linux, Darwin, and FreeBSD\n");
 			return false;
 		}
 	}
@@ -2293,12 +2313,10 @@ gb_internal bool init_build_paths(String init_filename) {
 	if (build_context.sanitizer_flags & SanitizerFlag_Memory) {
 		switch (build_context.metrics.os) {
 		case TargetOs_linux:
+		case TargetOs_freebsd:
 			break;
 		default:
-			gb_printf_err("-sanitize:memory is only supported on linux\n");
-			return false;
-		}
-		if (build_context.metrics.os != TargetOs_linux) {
+			gb_printf_err("-sanitize:memory is only supported on Linux and FreeBSD\n");
 			return false;
 		}
 	}
@@ -2307,9 +2325,10 @@ gb_internal bool init_build_paths(String init_filename) {
 		switch (build_context.metrics.os) {
 		case TargetOs_linux:
 		case TargetOs_darwin:
+		case TargetOs_freebsd:
 			break;
 		default:
-			gb_printf_err("-sanitize:thread is only supported on linux and darwin\n");
+			gb_printf_err("-sanitize:thread is only supported on Linux, Darwin, and FreeBSD\n");
 			return false;
 		}
 	}
