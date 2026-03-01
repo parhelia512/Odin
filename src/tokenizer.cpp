@@ -1114,6 +1114,7 @@ semicolon_check:;
 		/*fallthrough*/
 	case Token_Increment:
 	case Token_Decrement:
+	case Token_Not:
 		/*fallthrough*/
 		t->insert_semicolon = true;
 		break;
