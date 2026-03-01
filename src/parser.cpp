@@ -3490,6 +3490,9 @@ gb_internal Ast *parse_unary_expr(AstFile *f, bool lhs) {
 	case Token_Mul: // Used for error handling when people do C-like things
 	{
 		Token token = advance_token(f);
+		if (token.kind == Token_Not) {
+			skip_possible_newline(f);
+		}
 		Ast *expr = parse_unary_expr(f, lhs);
 		return ast_unary_expr(f, token, expr);
 	}
